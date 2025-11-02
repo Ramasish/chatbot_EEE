@@ -1,10 +1,10 @@
 # orchestrator.py
-from gs_agent import run_power_flow_agent
 from websearch_agent import run_websearch_agent
-from loss_agent import run_loss_agent
+from power_flow_agent import run_power_flow_agent
 from dotenv import load_dotenv
 import os
 from groq import Groq
+import json
 
 agent = Groq()
 
@@ -48,7 +48,7 @@ def classify_query(user_query):
                     "Call the route_query tool with type = 'power_flow' for questions about power flow analysis like solving the Ybus for volatage at each bus,"
                     "Call the route_query tool with type = 'loss_calculation_new_load' for questions about calculating power system losses after adding new loads,"
                     "bus voltages, admittance matrices, or similar topics. "
-                    "Respond with 'web_search' for all other general knowledge queries."
+                    "Call the route_query tool with type = 'web_search' for all other general knowledge questions, "
                     "Else for small talk and greetings, never call any tool and just respond accordingly."
                 )
             },
@@ -63,9 +63,11 @@ def classify_query(user_query):
     )
     
     if respone.choices[0].message.tool_calls:
-        tool_response = respone.choices[0].message.tool_calls[0]
+        tool_response = respone.choices[0].message.tool_calls[0].function
+        print(tool_response)
         if tool_response.name == "route_query":
-            arguments = tool_response.arguments
+            arguments = json.loads(tool_response.arguments)
+            print(arguments)
             return arguments['type'], arguments['query']
         else:
             return {"error": "Unexpected tool call"}
@@ -74,6 +76,7 @@ def classify_query(user_query):
 
 def orchestrate(user_query):
     answer, query = classify_query(user_query)
+    print(f"Classified query as: {answer}")
     if answer == "power_flow":
         return run_power_flow_agent(query)
     elif answer == "web_search":

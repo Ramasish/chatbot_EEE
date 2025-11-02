@@ -4,3 +4,4 @@ ddgs==9.6.1
 pypsa==1.0.2
 matlab.engine==25.2.2
 python-dotenv==1.2.1
+streamlit==1.51.0

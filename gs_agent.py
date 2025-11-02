@@ -185,7 +185,7 @@ def run_conversation(user_prompt):
     else:
         return response_message.content
 
-def run_power_flow_agent(user_prompt):
+def run_gs_agent(user_prompt):
     """
     Wrapper function for orchestrator compatibility
     """

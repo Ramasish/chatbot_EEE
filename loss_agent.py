@@ -169,10 +169,6 @@ def run_conversation(user_prompt):
     else:
         return response_message.content
 
-# Example usage
-if __name__ == "__main__":
-    user_input = input("Provide Ybus matrix, voltage vector, new load value and bus number (e.g., 'Ybus: [[1-1j, -1+1j], [-1+1j, 1-1j]], V: [1.0+0j, 0.95-0.0828j], Load: 1.0+0.5j, Bus: 1'): ")
-    print(run_conversation(user_input))
 
 def run_loss_agent(user_prompt):
     """
