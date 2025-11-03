@@ -70,29 +70,37 @@ def run_conversation(user_prompt):
         }
     ]
 
-    # Make the initial API call to Groq
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=messages,
-        stream=False,
-        tools=tools,
-        tool_choice="auto",
-        max_tokens=8100
-    )
+    # Define available tools mapping
+    available_functions = {
+        "run_power_flow_agent": run_gs_agent,
+        "run_loss_agent": run_loss_agent,
+    }
 
-    # Extract the response and any tool calls
-    response_message = response.choices[0].message
-    tool_calls = response_message.tool_calls
+    # Iterative loop to handle multiple rounds of tool calls
+    max_iterations = 10  # Safety limit to prevent infinite loops
+    iteration = 0
+    
+    while iteration < max_iterations:
+        # Make API call to Groq
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            stream=False,
+            tools=tools,
+            tool_choice="auto",
+            max_tokens=8100
+        )
 
-    if tool_calls:
-        # Define available tools
-        available_functions = {
-            "run_power_flow_agent": run_gs_agent,
-            "run_loss_agent": run_loss_agent,
-        }
+        # Extract the response and any tool calls
+        response_message = response.choices[0].message
+        tool_calls = response_message.tool_calls
 
         # Add the LLM's response to conversation
         messages.append(response_message)
+
+        # If there are no tool calls, return the final response
+        if not tool_calls:
+            return response_message.content
 
         # Process each tool call
         for tool_call in tool_calls:
@@ -102,7 +110,7 @@ def run_conversation(user_prompt):
             
             # Call the appropriate agent with the query
             function_response = function_to_call(function_args["query"])
-
+            print(function_name, function_response)
             # Add tool response to conversation
             messages.append(
                 {
@@ -112,17 +120,11 @@ def run_conversation(user_prompt):
                     "content": function_response,
                 }
             )
-
-        # Make second API call with updated conversation
-        second_response = client.chat.completions.create(
-            model=MODEL,
-            messages=messages
-        )
         
-        # Return final response
-        return second_response.choices[0].message.content
-    else:
-        return response_message.content
+        iteration += 1
+    
+    # If we've reached max iterations, return the last response
+    return response_message.content if response_message.content else "Maximum iterations reached. Please try a simpler query."
     
     
 def run_power_flow_agent(user_prompt):

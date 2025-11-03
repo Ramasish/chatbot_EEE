@@ -10,20 +10,99 @@ load_dotenv()
 client = Groq()
 MODEL = "openai/gpt-oss-120b"  # or the appropriate model name
 
-def gauss_seidel(Ybus, P, V_init=None, tol=1e-4, max_iter=100):
-    n = len(P)
-    if V_init is None:
-        V = np.ones(n, dtype=complex)
-    else:
-        V = V_init.copy()
+def gauss_seidel_loadflow(Ybus, bus_type, p_spec, q_spec, q_min, q_max, 
+                          V_init, tol=1e-4, max_iter=100):
+    """
+    Python version of MATLAB Gauss–Seidel load flow solver supporting PV and PQ buses.
 
-    for _ in range(max_iter):
+    Parameters
+    ----------
+    Ybus : (n,n) complex ndarray
+        Bus admittance matrix
+    bus_type : list or array of int
+        1 = PQ bus, 2 = PV bus, 0 = Slack
+    p_spec, q_spec : array_like
+        Specified active and reactive powers (in p.u.)
+    q_min, q_max : array_like
+        Minimum and maximum reactive power limits for PV buses
+    V_init : array_like (complex)
+        Initial voltage guesses
+    tol : float
+        Convergence tolerance
+    max_iter : int
+        Maximum iteration count
+
+    Returns
+    -------
+    V : (n,) complex ndarray
+        Final bus voltages
+    iters : int
+        Number of iterations performed
+    q_calc : ndarray
+        Final calculated reactive powers
+    """
+
+    n_bus = len(Ybus)
+    V = np.array(V_init, dtype=complex)
+    V_mag = np.abs(V)
+    theta = np.angle(V)
+    q_calc = np.array(q_spec, dtype=float)
+    V_history = [V.copy()]
+    max_err = []
+    
+    if q_min is None or len(q_min) == 0:
+        q_min = np.full(n_bus, -np.inf)
+    else:
+        q_min = np.array(q_min, dtype=float)
+
+    if q_max is None or len(q_max) == 0:
+        q_max = np.full(n_bus, np.inf)
+    else:
+        q_max = np.array(q_max, dtype=float)
+
+    for k in range(max_iter):
         V_prev = V.copy()
-        for i in range(n):
-            sigma = sum(Ybus[i][j] * V[j] for j in range(n) if j != i)
-            V[i] = (P[i] - sigma) / Ybus[i][i]
-        if np.max(np.abs(V - V_prev)) < tol:
+
+        for j in range(1, n_bus):  # skip slack (bus 1)
+            if bus_type[j] == 2:  # PV bus
+                # Compute reactive power
+                q_calc[j] = np.sum(
+                    V_mag[j] * V_mag * np.abs(Ybus[j, :]) *
+                    np.sin(theta[j] - theta + np.angle(Ybus[j, :]) * -1)
+                )
+
+                # Enforce Q limits
+                if q_calc[j] >= q_max[j]:
+                    q_calc[j] = q_max[j]
+                elif q_calc[j] <= q_min[j]:
+                    q_calc[j] = q_min[j]
+
+                # Form complex power
+                S = p_spec[j] - 1j * q_calc[j]
+
+                # Update voltage
+                sigma = np.dot(Ybus[j, :], V) - Ybus[j, j] * V[j]
+                V[j] = (S / np.conj(V[j]) - sigma) / Ybus[j, j]
+
+                # Re-normalize voltage magnitude to specified PV magnitude
+                V[j] = (V_mag[j] / np.abs(V[j])) * V[j]
+
+            else:  # PQ bus
+                S = p_spec[j] - 1j * q_spec[j]
+                sigma = np.dot(Ybus[j, :], V) - Ybus[j, j] * V[j]
+                V[j] = (S / np.conj(V[j]) - sigma) / Ybus[j, j]
+
+        # Update iteration trackers
+        V_history.append(V.copy())
+        err = np.abs(V - V_prev)
+        max_err.append(np.max(err))
+        V_mag = np.abs(V)
+        theta = np.angle(V)
+
+        # Convergence check
+        if max_err[-1] <= tol:
             break
+
     return V
 
 def run_conversation(user_prompt):
@@ -43,76 +122,78 @@ def run_conversation(user_prompt):
         {
             "type": "function",
             "function": {
-                "name": "gauss_seidel",
-                "description": "Solve for bus voltages using the Gauss-Seidel method",
+                "name": "gauss_seidel_loadflow",
+                "description": "Solve for bus voltages using the Gauss-Seidel Load Flow method including PV and PQ bus handling with Q-limits.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "Ybus": {
                             "type": "array",
-                            "description": "The admittance matrix Ybus as a list of lists of objects with real and imag parts",
+                            "description": "The bus admittance matrix Ybus as a list of lists, each element being an object with real and imag parts.",
                             "items": {
                                 "type": "array",
                                 "items": {
                                     "type": "object",
                                     "properties": {
-                                        "real": {
-                                            "type": "number"
-                                        },
-                                        "imag": {
-                                            "type": "number"
-                                        }
+                                        "real": {"type": "number"},
+                                        "imag": {"type": "number"}
                                     },
                                     "required": ["real", "imag"]
                                 }
                             }
                         },
-                        "P": {
+                        "bus_type": {
                             "type": "array",
-                            "description": "The power injections P (can be complex) as a list of objects with real and imag parts",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "real": {
-                                        "type": "number"
-                                    },
-                                    "imag": {
-                                        "type": "number"
-                                    }
-                                },
-                                "required": ["real", "imag"]
-                            }
+                            "description": "Bus types for each bus (1 = Slack, 2 = PV, 3 = PQ).",
+                            "items": {"type": "integer"}
+                        },
+                        "p_spec": {
+                            "type": "array",
+                            "description": "Specified active power injections (P_spec) in per unit for each bus.",
+                            "items": {"type": "number"}
+                        },
+                        "q_spec": {
+                            "type": "array",
+                            "description": "Specified reactive power injections (Q_spec) in per unit for each bus.",
+                            "items": {"type": "number"}
+                        },
+                        "q_min": {
+                            "type": "array",
+                            "description": "Minimum reactive power limits for PV buses.",
+                            "items": {"type": "number"}
+                        },
+                        "q_max": {
+                            "type": "array",
+                            "description": "Maximum reactive power limits for PV buses.",
+                            "items": {"type": "number"}
                         },
                         "V_init": {
                             "type": "array",
-                            "description": "Optional initial voltage guesses as a list of objects with real and imag parts",
+                            "description": "Initial complex bus voltage guesses as list of objects with real and imag parts.",
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "real": {
-                                        "type": "number"
-                                    },
-                                    "imag": {
-                                        "type": "number"
-                                    }
+                                    "real": {"type": "number"},
+                                    "imag": {"type": "number"}
                                 },
                                 "required": ["real", "imag"]
                             }
                         },
                         "tol": {
                             "type": "number",
-                            "description": "Tolerance for convergence"
+                            "description": "Tolerance for convergence of the iterative method (default 1e-4)."
                         },
                         "max_iter": {
                             "type": "integer",
-                            "description": "Maximum number of iterations"
+                            "description": "Maximum number of iterations to perform (default 100)."
                         }
                     },
-                    "required": ["Ybus", "P"]
+                    "required": ["Ybus", "bus_type", "p_spec", "q_spec", "V_init"]
                 }
             }
         }
     ]
+
     # Make the initial API call to Groq
     response = client.chat.completions.create(
         model=MODEL, # LLM to use
@@ -140,7 +221,7 @@ def run_conversation(user_prompt):
         
         # Define the available tools that can be called by the LLM
         available_functions = {
-            "gauss_seidel": gauss_seidel,
+            "gauss_seidel_loadflow": gauss_seidel_loadflow,
         }
         # Add the LLM's response to the conversation
         messages.append(response_message)
@@ -150,31 +231,53 @@ def run_conversation(user_prompt):
             function_name = tool_call.function.name
             function_to_call = available_functions[function_name]
             function_args = json.loads(tool_call.function.arguments)
-            # Parse arguments
-            ybus_parsed = parse_matrix(function_args.get("Ybus"))
-            p_parsed = parse_vector(function_args.get("P"))
-            v_init_parsed = parse_vector(function_args.get("V_init"))
+            print("Here are the values of the variables: ",function_args)
+            # --- Parse arguments ---
+            Ybus_parsed = parse_matrix(function_args.get("Ybus"))
+            bus_type = np.array(function_args.get("bus_type", []))
+            p_spec = np.array(function_args.get("p_spec", []), dtype=float)
+            q_spec = np.array(function_args.get("q_spec", []), dtype=float)
+            q_min = np.array(function_args.get("q_min", []), dtype=float)
+            q_max = np.array(function_args.get("q_max", []), dtype=float)
+            V_init_parsed = parse_vector(function_args.get("V_init"))
             tol = function_args.get("tol", 1e-4)
             max_iter = function_args.get("max_iter", 100)
-            # Call the tool and get the response
+
+            # --- Call the load flow solver (returns complex bus voltages) ---
             function_response = function_to_call(
-                Ybus=ybus_parsed,
-                P=p_parsed,
-                V_init=v_init_parsed,
+                Ybus=Ybus_parsed,
+                bus_type=bus_type,
+                p_spec=p_spec,
+                q_spec=q_spec,
+                q_min=q_min,
+                q_max=q_max,
+                V_init=V_init_parsed,
                 tol=tol,
                 max_iter=max_iter
             )
-            # Convert response to string
-            function_response = np.array2string(function_response, precision=4, suppress_small=True)
-            # Add the tool response to the conversation
+
+            # --- Post-processing: compute current & power injections ---
+            I = np.dot(Ybus_parsed, function_response)
+            S = function_response * np.conj(I)  # Complex power injection at each bus
+            total_loss = np.sum(np.real(S))     # Total real power loss (MW if base=1 pu)
+
+            # --- Create formatted tool output ---
+            tool_output = {
+                "Voltages": np.array2string(function_response, precision=4, suppress_small=True),
+                "Power_Injections": np.array2string(S, precision=4, suppress_small=True),
+                "Total_System_Loss": float(total_loss)
+            }
+
+            # --- Add to conversation messages ---
             messages.append(
                 {
-                    "tool_call_id": tool_call.id, 
-                    "role": "tool", # Indicates this message is from tool use
+                    "tool_call_id": tool_call.id,
+                    "role": "tool",
                     "name": function_name,
-                    "content": function_response,
+                    "content": json.dumps(tool_output, indent=2),
                 }
             )
+
         # Make a second API call with the updated conversation
         second_response = client.chat.completions.create(
             model=MODEL,

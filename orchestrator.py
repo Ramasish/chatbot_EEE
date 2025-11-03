@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import os
 from groq import Groq
 import json
+import base64
 
 agent = Groq()
 
@@ -21,7 +22,7 @@ tools = [
         "properties": {
           "type": {
             "type": "string",
-            "enum": ["power_flow", "web_search", "loss_calculation_new_load"],
+            "enum": ["power_flow", "web_search"],
             "description": "The target handler for the query"
           },
           "query": {
@@ -35,28 +36,54 @@ tools = [
   }
 ]
 
-def classify_query(user_query):
-    """Classify user query using simple keyword-based method."""
-    respone = agent.chat.completions.create(
-        model="openai/gpt-oss-120b",
-        messages=[
+def classify_query(user_query, image_base64=None, conversation_history=None):
+    """Classify user query using simple keyword-based method. Supports images and conversation history."""
+    # Build user message content - add image if present
+    user_content = f"{user_query}"
+    if image_base64:
+        user_content = [
             {
-                "role": "system",
-                "content": (
-                    "You are an expert agent that determines whether a user query "
-                    "is related to POWERFLOW analysis or a GENERAL WEB SEARCH. "
-                    "Call the route_query tool with type = 'power_flow' for questions about power flow analysis like solving the Ybus for volatage at each bus,"
-                    "Call the route_query tool with type = 'loss_calculation_new_load' for questions about calculating power system losses after adding new loads,"
-                    "bus voltages, admittance matrices, or similar topics. "
-                    "Call the route_query tool with type = 'web_search' for all other general knowledge questions, "
-                    "Else for small talk and greetings, never call any tool and just respond accordingly."
-                )
+                "type": "text",
+                "text": user_query
             },
             {
-                "role": "user",
-                "content": f"{user_query}"
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{image_base64}"
+                }
             }
-        ],
+        ]
+    
+    # Build messages list with system prompt, conversation history, and current query
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are an expert agent that determines whether a user query "
+                "is related to POWERFLOW analysis or a GENERAL WEB SEARCH. "
+                "If an image is provided, analyze it and use it to help classify the query. "
+                "Use the conversation history to understand context and follow-up questions. "
+                "Call the route_query tool with type = 'power_flow' for questions about power flow analysis like solving the Ybus for volatage at each bus,"
+                "bus voltages, admittance matrices, or similar topics. "
+                "Call the route_query tool with type = 'web_search' for all other general knowledge questions, "
+                "Else for small talk and greetings, never call any tool and just respond accordingly."
+            )
+        }
+    ]
+    
+    # Add conversation history if available
+    if conversation_history:
+        messages.extend(conversation_history)
+    
+    # Add current user query
+    messages.append({
+        "role": "user",
+        "content": user_content
+    })
+    
+    respone = agent.chat.completions.create(
+        model="meta-llama/llama-4-maverick-17b-128e-instruct",
+        messages=messages,
         tools=tools,
         max_tokens=2000,
         stream=False
@@ -72,10 +99,14 @@ def classify_query(user_query):
         else:
             return {"error": "Unexpected tool call"}
     else:
-        return respone.choices[0].message.content.strip(), None
+        response_content = respone.choices[0].message.content
+        if response_content:
+            return response_content.strip(), None
+        return None, None
 
-def orchestrate(user_query):
-    answer, query = classify_query(user_query)
+def orchestrate(user_query, image_base64=None, conversation_history=None):
+    """Orchestrate query handling with optional image support and conversation history."""
+    answer, query = classify_query(user_query, image_base64, conversation_history)
     print(f"Classified query as: {answer}")
     if answer == "power_flow":
         return run_power_flow_agent(query)
