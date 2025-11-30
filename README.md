@@ -742,9 +742,9 @@ This project is created for academic purposes as part of the EE403 Power System 
 ## 👥 Authors
 
 **Power Systems Team**
-- Project Lead & Developer: Mehul
+- Project Lead & Developer: Mehul,Ramasish,Krishna
 - Course: EE403 - Power System & Renewable Energy Lab
-- Institution: [Your Institution Name]
+- Institution: [National Institute of Technology Andhra Pradesh]
 
 ---
 
@@ -752,8 +752,8 @@ This project is created for academic purposes as part of the EE403 Power System 
 
 For questions, issues, or suggestions:
 - Create an issue in the repository
-- Email: [your-email@example.com]
-- Office Hours: [Schedule]
+- Email: [ramasishparida@gmail.com]
+
 
 ---
 
@@ -777,7 +777,7 @@ For questions, issues, or suggestions:
 
 ---
 
-**Last Updated**: November 28, 2025
+**Last Updated**: November 30, 2025
 
 **Version**: 1.0.0
 
